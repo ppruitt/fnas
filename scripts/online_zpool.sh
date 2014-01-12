@@ -1,5 +1,6 @@
 #!/bin/sh
 
+keyfile_dev="/dev/label/key.eli"
 keyfile_mount_pt="/keydata"
 pool="data"
 disks="disk0 disk1 disk2 disk3 disk4 disk5"
@@ -41,7 +42,17 @@ done
 echo "Bringing ZFS pool ${pool} online."
 zpool online ${pool} ${disklist} || err "Failed to bring ${pool} online."
 
+echo "Mounting ZFS datasets..."
+zfs mount -a
+zfs share -a
+
 if [ $mounted == 1 ]
 then 
-   umount ${keydata_mount_pt}
+   echo "Unmounting ${keyfile_mount_pt}."
+   umount ${keyfile_mount_pt} || err "Failed to unmount ${keyfile_mount_pt}"
+
+   echo "Detaching ${keyfile_dev}"
+   geli detach ${keyfile_dev} || err "Failed to geli detach ${keyfile_dev}"
 fi
+
+zpool status ${pool}
