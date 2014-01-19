@@ -48,9 +48,9 @@ def pretty_bytes(bytes):
     '''Print bytes in friendly units'''
     (MB, GB) = (1024**2, 1024**3)
     if bytes > GB:
-        return '%0.2 GB' % (float(bytes) / GB)
+        return '%0.2f GB' % (float(bytes) / GB)
     else:
-        return '%0.2 MB' % (float(bytes) / MB)
+        return '%0.2f MB' % (float(bytes) / MB)
 
 
 if __name__ == '__main__':
@@ -69,6 +69,8 @@ if __name__ == '__main__':
     args = parser.parse_args()
     
     conn = sqlite3.connect(args.db)
+    conn.text_factory = str
+
     cursor = conn.cursor()
     cursor.execute('''create table if not exists files 
                         (id     integer primary key asc autoincrement, 
@@ -155,8 +157,8 @@ if __name__ == '__main__':
         if parent_id is None:
             parent_id = -1
 
-        print 'Path %s, id = %d, parent = %d, total files = %d, total bytes = %d' % (
-               dirpath, dir_id, parent_id, file_count, byte_count)
+        print 'Path %s, id = %d, parent = %d, total files = %d, total bytes = %s' % (
+               dirpath, dir_id, parent_id, file_count, pretty_bytes(byte_count))
                 
         # visit the files in sorted order
         for fname in sorted(filenames):
