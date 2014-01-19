@@ -6,6 +6,7 @@ import sqlite3
 import argparse
 import stat
 import cPickle
+import logging
 
 def compute_dir_hashes(dir_entry, cursor, hash_dict):
     '''Computes hashes for directories'''
@@ -15,35 +16,30 @@ def compute_dir_hashes(dir_entry, cursor, hash_dict):
 
         # compute hashes for all children
         for child_dir in dir_entry[4]:
-            print 'Recurse %s' % child_dir[2]
+            logging.debug('Recurse %s' % child_dir[2])
             compute_dir_hashes(child_dir, cursor, hash_dict)
 
     # hash all child file and directory hashes
     h = hashlib.sha256()
-    # hash dir name (without path)
-    h.update(os.path.basename(dir_entry[2]))
 
-    print 'Hashing %s..' % dir_entry[2]
+    logging.debug('Hashing %s..' % dir_entry[2])
 
     for file_ent in dir_entry[5]:
         assert file_ent[4] is not None
         h.update(file_ent[4])
         
     for child in dir_entry[4]:
-        if child[6] is None:
-            print child
         assert child[6] is not None
         h.update(child[6])
 
     hash_str = h.hexdigest()
     dir_entry[6] = hash_str
 
-    print 'Hash for %s is %s' % (dir_entry[2], dir_entry[6])
+    logging.debug('Hash for %s is %s' % (dir_entry[2], dir_entry[6]))
     hash_dict.setdefault(hash_str, []).append(dir_entry[2]) 
     cursor.execute('update files set hash = ? where id = ?',
                    (hash_str, dir_entry[0]))
     
-        
 def pretty_bytes(bytes):
     '''Print bytes in friendly units'''
     (MB, GB) = (1024**2, 1024**3)
@@ -52,8 +48,18 @@ def pretty_bytes(bytes):
     else:
         return '%0.2f MB' % (float(bytes) / MB)
 
+BYTES_PER_LOG_MESSAGE = 1024 * 1024 * 1024
+last_log_bytes = 0
 
+def log_progress(cur_path, file_count, byte_count) :
+    global last_log_bytes
+    if (byte_count - last_log_bytes > BYTES_PER_LOG_MESSAGE):
+        last_log_bytes = byte_count
+        logging.info('%s bytes read, %d files, processing: %s' % (pretty_bytes(byte_count), file_count, cur_path))
+ 
 if __name__ == '__main__':
+    logging.basicConfig(format='%(asctime)s %(message)s', level = logging.INFO)
+
     parser = argparse.ArgumentParser()
     parser.add_argument('--db', metavar = 'DB', dest = 'db', 
                         required = True,
@@ -68,6 +74,8 @@ if __name__ == '__main__':
     
     args = parser.parse_args()
     
+    logging.info('Connecting to DB: %s' % args.db)
+
     conn = sqlite3.connect(args.db)
     conn.text_factory = str
 
@@ -104,7 +112,7 @@ if __name__ == '__main__':
     file_count = 0
     byte_count = 0
     last_commit_count = 0
-
+    
     files_per_commit = 1000
     count = 0
     blocksize = 1024 * 1024
@@ -114,11 +122,15 @@ if __name__ == '__main__':
     dir_hashes = {}
     dir_data = {}
 
+    logging.info('Scanning path: %s' % args.path)
+    if args.exclude:
+        logging.info('Excluding path: %s' % args.exclude)
+
     for dirpath, dirnames, filenames in os.walk(args.path):        
         file_count += 1
 
         if args.exclude and args.exclude == dirpath:
-            print 'Skipping %s dirpath' % dirpath
+            logging.info('Skipping %s dirpath' % dirpath)
             continue
 
         if is_root:
@@ -157,8 +169,7 @@ if __name__ == '__main__':
         if parent_id is None:
             parent_id = -1
 
-        print 'Path %s, id = %d, parent = %d, total files = %d, total bytes = %s' % (
-               dirpath, dir_id, parent_id, file_count, pretty_bytes(byte_count))
+        log_progress(dirpath, file_count, byte_count)
                 
         # visit the files in sorted order
         for fname in sorted(filenames):
@@ -167,9 +178,6 @@ if __name__ == '__main__':
             ftype = stat.S_IFMT(pstat.st_mode)
             
             h = hashlib.sha256()            
-            # hash our name (without path)
-            h.update(fname)
-
             # Only hash the contents regular files
             if stat.S_ISREG(pstat.st_mode):
                 with open(fullname, 'rb') as f:
@@ -200,18 +208,20 @@ if __name__ == '__main__':
                 conn.commit()
                 last_commit_count = file_count
             
+            log_progress(fullname, file_count, byte_count)
+
     conn.commit()
 
     # Visit all directories and compute hashes
-    print 'Computing directory hashes...'                   
+    logging.info('Computing directory hashes.')
     compute_dir_hashes(dir_data[args.path], cursor, dir_hashes)
 
     conn.commit()
 
-    print 'Pickling...'
+    logging.info('Pickling.')
     with file('treedata.pickle', 'wb') as pfile:
         pickler = cPickle.Pickler(pfile)
         pickler.dump(dir_data)
         pickler.dump(dir_hashes)
-    print 'Completed processing of %d files and %d bytes.' % (
-              file_count, byte_count)
+    logging.info('Completed processing of %d files and %d bytes.' % (
+              file_count, byte_count))
