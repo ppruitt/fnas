@@ -8,6 +8,7 @@ import logging
 import datetime
 import os.path
 import subprocess
+import sys
 
 class BackupException(Exception):
     '''Exception thrown if an error is encuntered during backup'''
@@ -88,6 +89,9 @@ def strip_snapshot(dataset):
     comps = dataset.split('@')
     return comps[0]
 
+def zpool(dataset):
+    return dataset.split('/')[0]
+
 def common_snapshots(a, b):
     '''Return a list of snapshots in common.
        Order is maintained'''
@@ -145,12 +149,14 @@ if __name__ == '__main__':
                 dest_dataset = os.path.join(dest_pool, strip_zpool(source_dataset))
                 try :
                     dest_snaps = existing_snapshots(dest_dataset)
-                    common_snaps = common_snapshots(source_snaps, dest_snaps)
+                    common_snaps = common_snapshots(source_snaps, dest_snaps)                    
                     if common_snaps:
+                        incr_snap = os.path.join(zpool(source_dataset), common_snaps[-1])
+
                         logger.info('Sending incremental stream from %s to %s for %s' % \
-                                    (common_snaps[-1], source_snaps[-1], dest_dataset))
+                                    (incr_snap, source_snaps[-1], dest_dataset))
                         run_shell_cmd('zfs send -v -p -I "%s" "%s" | zfs receive "%s"' % \
-                                      (common_snaps[-1], source_snaps[-1], dest_dataset),
+                                      (incr_snap, source_snaps[-1], dest_dataset),
                                       logger, args.dry_run)
                     else:
                         logger.info('No common snapshots. Sending non-incremental package for %s' % source_snaps[-1])
@@ -168,6 +174,4 @@ if __name__ == '__main__':
     except subprocess.CalledProcessError, e:
         logger.fatal(str(e))
 
-    print args
-
-
+    logger.info('%s exiting.' % sys.argv[0])
