@@ -1,9 +1,10 @@
 #!/usr/bin/env python
-
+"""Opens Pickled hash files and finds duplicative directory trees"""
+ 
 import cPickle
 import argparse
 import logging
-import sqlite3
+import os.path
 
 # Directory entry indexes
 (D_IDX_ID, 
@@ -34,19 +35,20 @@ if __name__ == '__main__':
     logging.basicConfig(format='%(asctime)s %(message)s', level = logging.INFO)
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--db', metavar = 'DB', dest = 'db', 
-                        required = True,
-                        help = 'Sqlite3 database')
 
     parser.add_argument('-p', metavar = 'pickle file', dest = 'pickle_file', 
                         required = True,
                         help = 'File containing pickled output from the make_tree_fingerprints command')
 
+    parser.add_argument('-e', dest = 'check_exists',
+                        action = "store_true",
+                        default = False,
+                        help = 'Check the existence of files/directories before listing')
+
     args = parser.parse_args()
-    
-    logging.info('Connecting to DB: %s' % args.db)
-    conn = sqlite3.connect(args.db)
-    conn.text_factory = str
+
+    if args.check_exists:
+        logging.info('Will check paths for existence.')
 
     logging.info('Loading pickled data structures from %s' % args.pickle_file)
     with open(args.pickle_file, 'rb') as infile:
@@ -67,4 +69,11 @@ if __name__ == '__main__':
     dup_list.sort(key = lambda d: d[1], reverse = True)
 
     for paths, size in dup_list:
-        print '%20s %s' % (pretty_bytes(size), ','.join(paths))
+        if args.check_exists:
+            # Keep only existing paths
+            paths = [p for p in paths if os.path.exists(p)]
+
+        if len(paths) > 1:
+            print('%20s %s' % (pretty_bytes(size), paths[0]))
+            for path in paths[1:] :
+                print('%20s %s' % (' ', path))
