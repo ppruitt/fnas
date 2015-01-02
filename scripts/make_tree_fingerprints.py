@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+'''Creates sha256 hashes of files and directories'''
 
 import hashlib
 import os
@@ -89,13 +90,13 @@ if __name__ == '__main__':
                         required = True,
                         help = 'Sqlite3 database')
 
-    parser.add_argument('--path', metavar = 'DIR', dest = 'path', 
-                        required = True,
-                        help = 'Root of the directory tree to hash')
-
-    parser.add_argument('--exclude', metavar = 'DIR', dest = 'exclude', default = None,
+    parser.add_argument('--exclude', metavar = 'DIR', 
+                        dest = 'exclude', default = [],
+                        action = 'append',
                         help = 'Full path to exclude')
-    
+
+    parser.add_argument('path', nargs='+', metavar = 'PATH')
+
     args = parser.parse_args()
     
     logging.info('Connecting to DB: %s' % args.db)
@@ -123,39 +124,41 @@ if __name__ == '__main__':
     byte_count = 0
     last_commit_count = 0
 
-    is_root = True
-
     dir_hashes = {}
     dir_data = {}
 
-    logging.info('Scanning path: %s' % args.path)
     if args.exclude:
-        logging.info('Excluding path: %s' % args.exclude)
+        for exclude in args.exclude:
+            logging.info('Excluding path: %s' % exclude)
 
-    # Walk the directory tree in top-down order (directories visited after files)
-    for dirpath, dirnames, filenames in os.walk(args.path, topdown = True):        
-        file_count += 1
+    for path in args.path:
+        is_root = True
+        logging.info('Scanning path: %s' % path)
+        
+        # Walk the directory tree in top-down order (directories visited after files)
+        for dirpath, dirnames, filenames in os.walk(path, topdown = True):        
+            file_count += 1
+            
+            # sort directory names (allowed with topdown visitation)
+            dirnames.sort()
+            
+            if dirpath in args.exclude:
+                logging.info('Skipping %s dirpath' % dirpath)
+                del dirnames[:]
+                continue
+                
+            if is_root:
+                parent = None
+                is_root = False
+                parent_id = None
+            else:
+                parent_dir = os.path.dirname(dirpath)
+                parent = dir_data[parent_dir]
+                parent_id = parent[D_IDX_ID]
 
-        # sort directory names (allowed with topdown visitation)
-        dirnames.sort()
-
-        if args.exclude and args.exclude == dirpath:
-            logging.info('Skipping %s dirpath' % dirpath)
-            del dirnames[:]
-            continue
-
-        if is_root:
-            parent = None
-            is_root = False
-            parent_id = None
-        else:
-            parent_dir = os.path.dirname(dirpath)
-            parent = dir_data[parent_dir]
-            parent_id = parent[D_IDX_ID]
-
-        # Insert Directory
-        dstat = os.lstat(dirpath)
-        cursor.execute('''insert into files (parent, path, type, mode, uid, gid, nlink, hash, size, mtime)
+            # Insert Directory
+            dstat = os.lstat(dirpath)
+            cursor.execute('''insert into files (parent, path, type, mode, uid, gid, nlink, hash, size, mtime)
                               values (?,?,?,?,?,?,?,?,?,?)''',
                        (parent_id,
                         dirpath,
@@ -168,58 +171,58 @@ if __name__ == '__main__':
                         dstat.st_size,
                         dstat.st_mtime))
 
-        dir_id = cursor.lastrowid
-        file_ents = []
-        dir_ents = []
-        cur_dir_ent = [dir_id, parent_id, dirpath, dstat, dir_ents, file_ents, None, 0] # id, parent_id, stat info, dir children, file children, hash, total_size
-        dir_data[dirpath] = cur_dir_ent
-        # add directory to parent
-        if parent:
-            parent[D_IDX_CHILD_DIRS].append(cur_dir_ent)
-
-        if parent_id is None:
-            parent_id = -1
-
-        log_progress(dirpath, file_count, byte_count)
+            dir_id = cursor.lastrowid
+            file_ents = []
+            dir_ents = []
+            cur_dir_ent = [dir_id, parent_id, dirpath, dstat, dir_ents, file_ents, None, 0] # id, parent_id, stat info, dir children, file children, hash, total_size
+            dir_data[dirpath] = cur_dir_ent
+            # add directory to parent
+            if parent:
+                parent[D_IDX_CHILD_DIRS].append(cur_dir_ent)
                 
-        # visit the files in sorted order
-        for fname in sorted(filenames):
-            fullname = os.path.join(dirpath, fname)
-            pstat = os.lstat(fullname)
-            ftype = stat.S_IFMT(pstat.st_mode)
+            if parent_id is None:
+                parent_id = -1
+                
+            log_progress(dirpath, file_count, byte_count)
             
-            h = hashlib.sha256()            
-            # Only hash the contents regular files
-            if stat.S_ISREG(pstat.st_mode):
-                with open(fullname, 'rb') as f:
-                    data = f.read(HASH_READ_BLOCKSIZE)
-                    while len(data) > 0:
-                       h.update(data)
-                       byte_count += len(data)
-                       data = f.read(HASH_READ_BLOCKSIZE)
-
-            hash_str = h.hexdigest()
-                       
-            cursor.execute('''insert into files (parent, path, type, mode, uid, gid, nlink, hash, size, mtime)
-                              values (?,?,?,?,?,?,?,?,?,?)''',
-                    (dir_id,
-                     fullname,
-                     stat.S_IFMT(dstat.st_mode),
-                     pstat.st_mode,
-                     pstat.st_uid,
-                     pstat.st_gid,
-                     pstat.st_nlink,
-                     hash_str,
-                     pstat.st_size,
-                     pstat.st_mtime))
- 
-            file_ents.append((fullname, cursor.lastrowid, dir_id, pstat, hash_str)) 
-            file_count += 1
-            if file_count - last_commit_count > FILES_PER_COMMIT:
-                conn.commit()
-                last_commit_count = file_count
-            
-            log_progress(fullname, file_count, byte_count)
+            # visit the files in sorted order
+            for fname in sorted(filenames):
+                fullname = os.path.join(dirpath, fname)
+                pstat = os.lstat(fullname)
+                ftype = stat.S_IFMT(pstat.st_mode)
+                
+                h = hashlib.sha256()            
+                # Only hash the contents regular files
+                if stat.S_ISREG(pstat.st_mode):
+                    with open(fullname, 'rb') as f:
+                        data = f.read(HASH_READ_BLOCKSIZE)
+                        while len(data) > 0:
+                            h.update(data)
+                            byte_count += len(data)
+                            data = f.read(HASH_READ_BLOCKSIZE)
+                            
+                hash_str = h.hexdigest()
+                
+                cursor.execute('''insert into files (parent, path, type, mode, uid, gid, nlink, hash, size, mtime)
+                                      values (?,?,?,?,?,?,?,?,?,?)''',
+                           (dir_id,
+                            fullname,
+                            stat.S_IFMT(dstat.st_mode),
+                            pstat.st_mode,
+                            pstat.st_uid,
+                            pstat.st_gid,
+                            pstat.st_nlink,
+                            hash_str,
+                            pstat.st_size,
+                            pstat.st_mtime))
+                
+                file_ents.append((fullname, cursor.lastrowid, dir_id, pstat, hash_str)) 
+                file_count += 1
+                if file_count - last_commit_count > FILES_PER_COMMIT:
+                    conn.commit()
+                    last_commit_count = file_count
+                    
+                log_progress(fullname, file_count, byte_count)
 
     conn.commit()
 
