@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3.4
 '''Backs up a zpool to another zpool(s), which are usually housed on 
    external disks
 '''
@@ -7,10 +7,14 @@ import argparse
 import logging
 import datetime
 import os.path
+import os
+import re
 import subprocess
 import sys
 
 BKUP_LABEL_ROOT = '/dev/label'
+BKUP_DISK_PREFIX = 'bkup'
+DEFAULT_ENCODING = 'utf-8'
 
 class BackupException(Exception):
     '''Exception thrown if an error is encuntered during backup'''
@@ -34,7 +38,8 @@ def parse_args():
 
     parser.add_argument('-d', metavar = 'ZPOOL_NAME', dest = 'dest_zpools', 
                         action = 'append',
-                        required = True,
+                        required = False,
+                        default = get_backup_devs(),
                         help = 'Destination zpool. This option may be specified multiple times')
 
 
@@ -76,13 +81,17 @@ def validate_datasets(datasets):
     if retval != 0:
         raise BackupException('Failed to validate zfs datasets. Error code: %d' % retval)
 
+def get_backup_devs(devdir = BKUP_LABEL_ROOT, devprefix = BKUP_DISK_PREFIX):
+    dev_re = re.compile('%s[0-9]+' % devprefix)
+    return [dev for dev in os.listdir(BKUP_LABEL_ROOT) if dev_re.match(dev)]
+        
 def get_zpools(names = None):
     '''Retrieve a list of zpools. Optionally supply pool names to list'''
     cmd_list = ['zpool','list','-H']
     if names:
         cmd_list += names
         
-    pool_str = subprocess.check_output(cmd_list)
+    pool_str = subprocess.check_output(cmd_list).decode(DEFAULT_ENCODING, 'ignore')
     pool_list = []
     for pool_data in pool_str.splitlines():
         pool_fields = pool_data.split('\t')
@@ -112,7 +121,7 @@ def zpool_export(pool, logger, dry_run = False):
 def existing_snapshots(dataset):
     '''Returns a list of snapshots for the dataset in ascending order of creation'''
     cmd_list = ['zfs', 'list', '-H', '-t', 'snapshot', '-s', 'creation', '-r', dataset]
-    snapshot_str = subprocess.check_output(cmd_list)
+    snapshot_str = subprocess.check_output(cmd_list).decode(DEFAULT_ENCODING, 'ignore')
     snapshot_list = [x.split('\t')[0] for x in snapshot_str.splitlines()]
     return snapshot_list
 
@@ -152,8 +161,8 @@ def geli_detach(dev, logger, dry_run = False):
 
 def run_shell_cmd(cmd_str, logger, dry_run = False, shell = True):
     '''Run a shell command if a dry run is not specified'''
-    if not args.dry_run:
-        logger.debug('Executing command: %s' % cmd_str)
+    logger.debug('Executing command: %s' % ' '.join(cmd_str))
+    if not args.dry_run:        
         retval = subprocess.call(cmd_str, shell = shell)
         if retval != 0:
             logger.error('Command returned error code %d: command: %s' % (retval, cmd_str))
@@ -230,7 +239,7 @@ if __name__ == '__main__':
                                       (source_snaps[-1], dest_dataset),
                                       logger, args.dry_run, shell = True)
                 
-                except subprocess.CalledProcessError, e:
+                except subprocess.CalledProcessError as e:
                     logger.info('Destination dataset %s does not exist. Sending full replication stream' % dest_dataset)
                     run_shell_cmd('zfs send -v -R "%s" | zfs receive "%s"' % \
                                   (source_snaps[-1], dest_dataset),
@@ -239,9 +248,9 @@ if __name__ == '__main__':
                 zpool_export(dest_pool, logger, args.dry_run)                
                 geli_detach(os.path.join(BKUP_LABEL_ROOT, dest_pool), logger, args.dry_run)
 
-    except BackupException, e:
+    except BackupException as e:
         logger.fatal(str(e))
-    except subprocess.CalledProcessError, e:
+    except subprocess.CalledProcessError as e:
         logger.fatal(str(e))
 
     logger.info('%s exiting.' % sys.argv[0])
