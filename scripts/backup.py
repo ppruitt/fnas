@@ -35,11 +35,11 @@ def parse_args():
     parser.add_argument('-u', action= "store_true", dest = 'unmount',
                         default = False,
                         help = 'export backup pools and geli detach')
-
+    
     parser.add_argument('-d', metavar = 'ZPOOL_NAME', dest = 'dest_zpools', 
                         action = 'append',
                         required = False,
-                        default = get_backup_devs(),
+                        default = None,
                         help = 'Destination zpool. This option may be specified multiple times')
 
 
@@ -61,12 +61,17 @@ def parse_args():
     parser.add_argument('dataset', nargs='+')
 
     args = parser.parse_args()
+
+    if not args.dest_zpools:
+        backup_devices = get_backup_devs()
+        args.dest_zpools = backup_devices
+        
     return args
 
 def make_ts_str():
     '''Creates a timestamp string containing the date and time'''
     now = datetime.datetime.utcnow()
-    return now.strftime('%Y%m%d-%H%m')
+    return now.strftime('%Y%m%d-%H%M')
 
 def make_zfs_snapshots(snapshot_names):
     cmd_list = ['zfs', 'snapshot'] + snapshot_names
@@ -83,7 +88,7 @@ def validate_datasets(datasets):
 
 def get_backup_devs(devdir = BKUP_LABEL_ROOT, devprefix = BKUP_DISK_PREFIX):
     dev_re = re.compile('%s[0-9]+' % devprefix)
-    return [dev for dev in os.listdir(BKUP_LABEL_ROOT) if dev_re.match(dev)]
+    return [dev for dev in os.listdir(BKUP_LABEL_ROOT) if dev_re.fullmatch(dev)]
         
 def get_zpools(names = None):
     '''Retrieve a list of zpools. Optionally supply pool names to list'''
