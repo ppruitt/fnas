@@ -1,33 +1,22 @@
 #!/bin/sh
 
-if [ $# -lt 3 ]
+bkup_script=./backup.py
+default_args="-mu"
+datasets="data/ca data/devel data/docs data/downloads data/music data/photos data/records data/video data/archaeology"
+
+if [ $# -gt 0 ]
 then
-    echo "Usage: $0 src_zpool dest_zpool fs_name [, fs_name, ...]"
-    exit 1
+    args=$*
+else
+    args=${default_args}
 fi
 
-ts=`date -u +%Y%m%d-%H%m`
+if [ ! -f ${bkup_script} ] 
+then
+    echo "Can't find backup script."
+    exit 2
+fi
 
-src_pool=${1}
-shift
+echo "Executing:" ${bkup_script} ${args} ${datasets}
+${bkup_script} ${default_args} ${args} ${datasets}
 
-dest_pool=${1}
-shift 
-
-for fs_name in $* 
-do
-    snap="${src_pool}/${fs_name}@${ts}"
-    echo "Creating snapshot ${snap}"
-    zfs snapshot ${snap} || { echo "Failed to create snapshot ${snap}"; exit 2; }
-done
-
-for fs_name in $* 
-do
-    snap="${src_pool}/${fs_name}@${ts}"
-    dest_snap="${dest_pool}/${fs_name}"
-    echo "Transferring snapshot ${snap} to ${dest_snap}..."
-
-    zfs send -v -R "${snap}" | zfs receive ${dest_snap} || { echo "Failed to send."; exit 3; }
-done
-
-zfs list ${dest_pool}
